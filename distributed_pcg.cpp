@@ -225,8 +225,10 @@ int main(int argc, char* argv[]) {
   // local rows of the 1D Laplacian matrix; local column indices start at -1 for rank > 0
   for (int i=0; i<n; i++) {
     A.Assign(i,i)=2.0;
-    if (offset+i-1 >= 0) A.Assign(i,i-1)=-1;
-    if (offset+i+1 < N)  A.Assign(i,i+1)=-1;
+    if (offset + i - 1 >= 0) A.Assign(i,i - 1) = -1;
+    if (offset + i + 1 < N)  A.Assign(i,i + 1) = -1;
+    if (offset + i + N < N) A.Assign(i, i + N) = -1;
+    if (offset + i - N >= 0) A.Assign(i, i - N) = -1;
   }
 
   // initial guess
