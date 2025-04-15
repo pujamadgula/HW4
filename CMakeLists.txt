@@ -1,7 +1,7 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.20)
 project(hw4)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
 
 find_package(MPI REQUIRED)
@@ -27,5 +27,5 @@ if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
             "module swap ${Prg-${CMAKE_C_COMPILER_ID}} PrgEnv-gnu")
 endif ()
 
-add_executable(pcg distributed_pcg.cpp)
+add_executable(pcg main.cpp distributed_pcg.cpp common.h)
 target_link_libraries(pcg PRIVATE MPI::MPI_CXX Eigen3::Eigen)
