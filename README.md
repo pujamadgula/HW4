@@ -29,16 +29,17 @@ This project aims to implement a distributed Preconditioned Conjugate Gradient (
 ## Running the Code
 
 ## Submitting the homework
-1. **Make Package:**
 Ensure that your write-up is located in your source directory, next to distributed_pcg.cpp. It should be named cs267XY_hw4.pdf with XY being your group ID.
-    ```sh
-    cmake -DGROUP_NAME="YourGroupID XY" ..
-    make package
-    ```
+```sh
+cmake -DGROUP_NAME="YourGroupID XY" ..
+make package
+```
 This second command will fail if the PDF is not present. Confirm that it worked using the following command. You should see output like:
-    ```sh
-    demmel@perlmutter:~/HW4/build> tar tfz cs267XY_hw4.tar.gz 
-    cs267XY_hw4/cs267XY_hw4.pdf 
-    cs267XY_hw4/distributed_pcg.cpp
-    ```
+
+```sh
+demmel@perlmutter:~/HW4/build> tar tfz cs267XY_hw4.tar.gz 
+cs267XY_hw4/cs267XY_hw4.pdf 
+cs267XY_hw4/distributed_pcg.cpp
+```
+
 Then submit your cs267XY_hw4.tar.gz through bCourses.
