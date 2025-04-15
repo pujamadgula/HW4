@@ -27,7 +27,7 @@ This project aims to implement a distributed Preconditioned Conjugate Gradient (
     This will create an executable named `pcg` in the build directory.
 
 ## The problem
-The goal is to solve $Ax = b$ where $A = L + I$ is an $N \times N$ s.p.d. matrix with $L$ being the Laplacian of the 1D Poisson's equation and $I$ is the identity matrix. The right hand side $b$ is all $1$s and the preconditioned conjugate gradient starts with an initial guess $x$ of all $0$s.
+The goal is to solve $Ax = b$ where $A = L + I$ is an $N \times N$ s.p.d. matrix with $L$ being the Laplacian of the 1D Poisson's equation and $I$ is the identity matrix. The right hand side $b$ is all 1s and the preconditioned conjugate gradient starts with an initial guess $x$ of all 0s. You can only modify the `distributed_pcg.cpp` file.
 
 ## Running the Code
 

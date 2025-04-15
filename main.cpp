@@ -75,7 +75,7 @@ int main(int argc, char* argv[]) {
   if (rank == 0)
     global_x.resize(N);
 
-  MPI_Gather(x.data(), n, MPI_DOUBLE, global_x.data(), N, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(x.data(), n, MPI_DOUBLE, global_x.data(), n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   if (rank == 0) {
     double r_square = 0;
