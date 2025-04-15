@@ -13,7 +13,7 @@ set(GROUP_NAME "None" CACHE STRING "Your group name as it appears on bCourses (n
 # Packaging system
 if (NOT ${GROUP_NAME} STREQUAL None)
     set(CPACK_GENERATOR TGZ)
-    set(CPACK_PACKAGE_FILE_NAME "cs267${GROUP_NAME}_hw2_2")
+    set(CPACK_PACKAGE_FILE_NAME "cs267${GROUP_NAME}_hw4")
     install(FILES distributed_pcg.cpp DESTINATION .)
     install(FILES ${CPACK_PACKAGE_FILE_NAME}.pdf DESTINATION .)
     include(CPack)
@@ -29,6 +29,3 @@ endif ()
 
 add_executable(pcg distributed_pcg.cpp)
 target_link_libraries(pcg PRIVATE MPI::MPI_CXX Eigen3::Eigen)
-
-
-
