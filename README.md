@@ -1,5 +1,5 @@
 # Distributed Preconditioned Conjugate Gradient (PCG)
-
+# Kofi here
 This project aims to implement a distributed Preconditioned Conjugate Gradient (PCG) solver using MPI.
 
 ## Building the Code
