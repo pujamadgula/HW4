@@ -1,5 +1,27 @@
 # Distributed Preconditioned Conjugate Gradient (PCG)
-# Kofi here
+# Kofi 
+
+# Research Terms
+## Puja
+- Sparse Matrix
+- Compressed Sparse Row
+- Compressed Sparse Column
+- Distributed version of a method
+- Eigen values
+
+## Kofi
+- Preconditioned Conjugate gradient method
+- Linear systems
+- Matrix-vector multiplication  
+- MPI processors
+- Strong vs weak scaling
+
+
+## Questions to ask
+- Do we convert the starter code to CSR first before benchmarking, or benchmark the starter code.
+
+
+
 This project aims to implement a distributed Preconditioned Conjugate Gradient (PCG) solver using MPI.
 
 ## Building the Code
