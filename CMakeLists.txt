@@ -27,5 +27,5 @@ if (NOT "${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
             "module swap ${Prg-${CMAKE_C_COMPILER_ID}} PrgEnv-gnu")
 endif ()
 
-add_executable(pcg main.cpp distributed_pcg.cpp common.h)
+add_executable(pcg main.cpp distributed_pcg.cpp common.h matrix.hpp)
 target_link_libraries(pcg PRIVATE MPI::MPI_CXX Eigen3::Eigen)

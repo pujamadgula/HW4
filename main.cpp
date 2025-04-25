@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "common.h"
+#include "matrix.hpp"
 
 // Command Line Option Processing
 int find_arg_idx(int argc, char** argv, const char* option) {
@@ -31,62 +32,42 @@ int find_int_arg(int argc, char** argv, const char* option, int default_value) {
 int main(int argc, char* argv[]) {
   MPI_Init(&argc, &argv); // Initialize the MPI environment
   
-  int size;
-  MPI_Comm_size(MPI_COMM_WORLD, &size); // Get the number of processes
+  int n_ranks;
+  MPI_Comm_size(MPI_COMM_WORLD, &n_ranks); // Get the number of processes
   
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank); // Get the rank of the process
+  int my_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank); // Get the rank of the process
 
   if (find_arg_idx(argc, argv, "-h") >= 0) {
       std::cout << "-N <int>: side length of the sparse matrix" << std::endl;
       return 0;
   }
 
-  int N = find_int_arg(argc, argv, "-N", 1 << 20); // global size
+  // int N = find_int_arg(argc, argv, "-N", 1 << 20); // global size
+  int N = 10;
 
-  assert(N % size == 0);
-  int n = N / size; // number of local rows
+  assert(N % n_ranks == 0);
+  int n = N / n_ranks; // number of local rows
 
-  // generate L + I
-  CG_Solver cg(n, N);
 
-  // initial guess
-  std::vector<double> x(n, 0);
+  // Create local matrix
+  CSR A_local(n, N);
+  fill_local_matrix(A_local, my_rank);
 
-  // right-hand side
-  std::vector<double> b(n, 1);
+  // Print matrix
+  for (int i=0; i < n_ranks; i++) {
 
-  MPI_Barrier(MPI_COMM_WORLD);
-  double time = MPI_Wtime();
+	  if (my_rank == i) {
+		  std::cout << "Rank " << my_rank << ":" << std::endl;
 
-  cg.solve(b, x, 1e-8);
+		  std::cout << Eigen::MatrixXd(A_local) << std::endl;
+	  }
 
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  // Do not modify this line, use for grading
-  if (rank == 0) {
-    std::cout << "Time for CG of size " << N << " with " 
-              << size << " rank(s): " << MPI_Wtime() - time 
-              << " seconds." << std::endl;
+	  MPI_Barrier(MPI_COMM_WORLD);
   }
-  
-  std::vector<double> global_x;
-  
-  if (rank == 0)
-    global_x.resize(N);
 
-  MPI_Gather(x.data(), n, MPI_DOUBLE, global_x.data(), n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-  if (rank == 0) {
-    double r_square = 0;
-    for (int i = 0; i < N; ++i) {
-      double r = global_x[i] * 3;
-      if (i > 0)  r -= global_x[i - 1];
-      if (i + 1 < N)  r -= global_x[i + 1];
-      r_square += (r - 1) * (r - 1);
-    }
-    std::cout << "|Ax - b| / |b| = " << std::sqrt(r_square) / std::sqrt(N) << std::endl;
-  }
+
 
   MPI_Finalize(); // Finalize the MPI environment
 
