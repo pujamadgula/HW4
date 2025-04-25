@@ -54,20 +54,34 @@ int main(int argc, char* argv[]) {
   CSR A_local(n, N);
   fill_local_matrix(A_local, my_rank);
 
+  CSR A_block(n,n);
+  get_diagonal_block(A_local, A_block, my_rank);
+
   // Print matrix
   for (int i=0; i < n_ranks; i++) {
 
 	  if (my_rank == i) {
-		  std::cout << "Rank " << my_rank << ":" << std::endl;
+		  std::cout << "Rank " << my_rank << " chunk:" << std::endl;
 
 		  std::cout << Eigen::MatrixXd(A_local) << std::endl;
+		  std::cout << std::endl;
 	  }
 
 	  MPI_Barrier(MPI_COMM_WORLD);
   }
 
+  // Print diagonal blocks
+  for (int i=0; i < n_ranks; i++) {
 
+	  if (my_rank == i) {
+		  std::cout << "Rank " << my_rank << " diag block:" << std::endl;
+		  std::cout << Eigen::MatrixXd(A_block) << std::endl;
+		  std::cout << std::endl;
+	  }
 
+	  MPI_Barrier(MPI_COMM_WORLD);
+  }
+ 
 
   MPI_Finalize(); // Finalize the MPI environment
 

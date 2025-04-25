@@ -1,40 +1,28 @@
 Rank 0 chunk:
  2 -1  0  0  0  0  0  0  0  0
 -1  2 -1  0  0  0  0  0  0  0
-
-Rank 1 chunk:
  0 -1  2 -1  0  0  0  0  0  0
  0  0 -1  2 -1  0  0  0  0  0
-
-Rank 2 chunk:
  0  0  0 -1  2 -1  0  0  0  0
- 0  0  0  0 -1  2 -1  0  0  0
 
-Rank 3 chunk:
+Rank 1 chunk:
+ 0  0  0  0 -1  2 -1  0  0  0
  0  0  0  0  0 -1  2 -1  0  0
  0  0  0  0  0  0 -1  2 -1  0
-
-Rank 4 chunk:
  0  0  0  0  0  0  0 -1  2 -1
  0  0  0  0  0  0  0  0 -1  2
 
-Rank 0 diag block:
- 2 -1
--1  2
-
 Rank 1 diag block:
- 2 -1
--1  2
+Rank 0 diag block:
+ 2 -1  0  0  0
+-1  2 -1  0  0
+ 0 -1  2 -1  0
+ 0  0 -1  2 -1
+ 0  0  0 -1  2
 
-Rank 2 diag block:
- 2 -1
--1  2
-
-Rank 3 diag block:
- 2 -1
--1  2
-
-Rank 4 diag block:
- 2 -1
--1  2
+ 2 -1  0  0  0
+-1  2 -1  0  0
+ 0 -1  2 -1  0
+ 0  0 -1  2 -1
+ 0  0  0 -1  2
 
