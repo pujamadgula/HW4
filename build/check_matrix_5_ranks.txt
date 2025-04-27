@@ -38,3 +38,71 @@ Rank 4 diag block:
  2 -1
 -1  2
 
+==== Rank 0 ====
+ghost_cols: 2 
+g2l mapping: [2 -> 0] 
+send_ranks:
+  to rank 1: 0 
+recv_ranks:
+  from rank 1: 0 
+===================
+
+==== Rank 1 ====
+ghost_cols: 1 4 
+g2l mapping: [4 -> 1] [1 -> 0] 
+send_ranks:
+  to rank 0: 0 
+  to rank 2: 0 
+recv_ranks:
+  from rank 0: 0 
+  from rank 2: 1 
+===================
+
+==== Rank 2 ====
+ghost_cols: 3 6 
+g2l mapping: [6 -> 1] [3 -> 0] 
+send_ranks:
+  to rank 1: 0 
+  to rank 3: 0 
+recv_ranks:
+  from rank 1: 0 
+  from rank 3: 1 
+===================
+
+==== Rank 3 ====
+ghost_cols: 5 8 
+g2l mapping: [8 -> 1] [5 -> 0] 
+send_ranks:
+  to rank 2: 0 
+  to rank 4: 0 
+recv_ranks:
+  from rank 2: 0 
+  from rank 4: 1 
+===================
+
+==== Rank 4 ====
+ghost_cols: 7 
+g2l mapping: [7 -> 0] 
+send_ranks:
+  to rank 3: 0 
+recv_ranks:
+  from rank 3: 0 
+===================
+
+Rank 2 Irecv from 1
+Rank 2 Irecv from 3
+Rank 2 Isend to 1
+Rank 2 Isend to 3
+Rank 3 Irecv from 2
+Rank 3 Irecv from 4
+Rank 3 Isend to 2
+Rank 3 Isend to 4
+starting error: 10
+Rank 0 Irecv from 1
+Rank 0 Isend to 1
+Rank 1 Irecv from 0
+Rank 1 Irecv from 2
+Rank 1 Isend to 0
+Rank 1 Isend to 2
+Rank 4 Irecv from 3
+Rank 4 Isend to 3

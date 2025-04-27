@@ -12,7 +12,6 @@ Rank 1 chunk:
  0  0  0  0  0  0  0 -1  2 -1
  0  0  0  0  0  0  0  0 -1  2
 
-Rank 1 diag block:
 Rank 0 diag block:
  2 -1  0  0  0
 -1  2 -1  0  0
@@ -20,9 +19,33 @@ Rank 0 diag block:
  0  0 -1  2 -1
  0  0  0 -1  2
 
+Rank 1 diag block:
  2 -1  0  0  0
 -1  2 -1  0  0
  0 -1  2 -1  0
  0  0 -1  2 -1
  0  0  0 -1  2
 
+==== Rank 0 ====
+ghost_cols: 5 
+g2l mapping: [5 -> 0] 
+send_ranks:
+  to rank 1: 0 
+recv_ranks:
+  from rank 1: 0 
+===================
+
+==== Rank 1 ====
+ghost_cols: 4 
+g2l mapping: [4 -> 0] 
+send_ranks:
+  to rank 0: 0 
+recv_ranks:
+  from rank 0: 0 
+===================
+
+starting error: 35
+Rank 0 Irecv from 1
+Rank 0 Isend to 1
+Rank 1 Irecv from 0
+Rank 1 Isend to 0
