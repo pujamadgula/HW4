@@ -10,6 +10,7 @@
 typedef Eigen::SparseMatrix<double, Eigen::RowMajor>     CSR;
 typedef Eigen::Triplet<double>                           Triplet;
 typedef Eigen::VectorXd                                  Vec;
+typedef Eigen::VectorBlock<Eigen::VectorXd>              VecView;
 
 
 // making the 1D laplacian for a local chunk of the 
@@ -63,7 +64,7 @@ void get_diagonal_block(const CSR& A_local, CSR& A_block, int my_rank) {
 
 
 // 
-void apply_preconditioner(const CSR& A_block, const Vec& r_local, Vec& r_local_cond) {
+void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond) {
 
 	// Only need to create once
 	static Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
@@ -77,7 +78,7 @@ void apply_preconditioner(const CSR& A_block, const Vec& r_local, Vec& r_local_c
 		initialized = true;
 	}
 
-	r_local_cond = ichol.solve(r_local);
+	r_cond = ichol.solve(r);
 
 	if (ichol.info() != Eigen::Success) {
 		throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
@@ -85,164 +86,129 @@ void apply_preconditioner(const CSR& A_block, const Vec& r_local, Vec& r_local_c
 }
 
 
+/// NEED TO VISUALIZE THE SPMV 
+//
+//   x0   x1   x2 |  x3   x4   x5
+//    2   -1    0 |   0    0    0                | x0          | 
+//   -1    2   -1 |   0    0    0    RANK 0      | x1          |
+//    0   -1    2 | |-1|   0    0                | x2          |
+//    ------------|--------------         x    --P-----   = result 
+//    0    0  |-1||   2   -1    0                | x3          |
+//    0    0    0 |  -1    2   -1    RANK 1      | x4          |
+//    0    0    0 |   0   -1    2                | x5          |
 
-void compute_halo(const CSR A_local,
-		  int my_rank, int n_ranks, int N,
-		  std::vector<int>& ghost_cols,
-		  std::vector<std::vector<int>>& send_ranks,
-		  std::vector<std::vector<int>>& recv_ranks,
-		  std::unordered_map<int, int>& g2l) {
 
-	int n = A_local.rows();
+// What's the 'rule' here
+// if your column index is outside the range of your rows
+// then you'll need to communicate
+// but only a subset bc the rest are zeros
+//
+// should I just check if you are on the triangle???
+// or is there a simplier way
+
+//   x0   x1 | x2   x3  | x4   x5
+//    2   -1 |  0    0  |  0    0                | x0          | 
+//   -1    2 ||-1|   0  |  0    0   RANK 0       | x1          |
+//    -------|----------|--------
+//    0  |-1||  2   -1  |  0    0                | x2          |
+//    0    0 | -2    2  ||-1|   0   RANK 1       | x3          |
+//    -------|----------|--------
+//    0    0 |  0  |-1| |  2   -1                | x4          |
+//    0    0 |  0    0  | -1    2   Rank 2       | x5          |
+//
+//
+//    wait does it even matter which thing is "outside" of
+//    the bounds? bc I'm communicating p not A
+//    so maybe that really doesnt matter
+//    and I just need to know which neighbors to send my P to
+//
+//    I could probably get away with not sending the full P
+//    if I did careful book keeping, but should I maybe start
+//    with just sending all of P????
+//
+
+
+//  The communication pattern boils down to the same as a 1D neighbor
+//  exchange
+
+
+// what if i started with just a stupid simple version where
+// i build all of the required P vector (padding with zeros feels stupid tho)...
+//
+// should we use a sparse vector maybe??????
+// Let's see if we can set our functions up to be
+// be somewhat flexible and decide later
+//
+
+
+
+// Take the current residual on this rank
+// build the next P matrix
+// by exchanging with neighbors
+void exchange_P_halo(int my_rank, int n_ranks, int n, int local_start, Vec& P_halo) {
+
+	MPI_Request requests[4];
+	int req_idx = 0;
+
 	int row_start = my_rank * n;
-	int row_end = (my_rank + 1) * n;
+	int row_end   = my_rank * (n+1);
 
-	// Determine which rank owns the rows of the
-	// non-zero columns of this rank's local chunk
-	for (int i=0; i < n; ++i) {
-		for (CSR::InnerIterator it(A_local, i); it; ++it) {
-			int col = it.col();
+	double for_left, for_right;
+	double from_left, from_right;
 
-			if (col < row_start || col >= row_end) {
-				if (!g2l.count(col)) {
-					int local_index = ghost_cols.size();
-					g2l[col] = local_index;
-					ghost_cols.push_back(col);
-				}
-			}
-		}
+	// R0  - R1 - R2 - R3 - Rn_ranks-1 //
+
+	// Send to left
+	if (my_rank > 0) {
+		for_left = P_halo[local_start];
+
+		std::cout << my_rank << " sending first P value to " << my_rank-1 << std::endl;
+
+		MPI_Isend(&for_left, 1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
 	}
 
+	// Send to right
+	if (my_rank < n_ranks -1) {
+		for_right = P_halo[local_start + n];
 
-	// Figure out the send and recieves
-	recv_ranks.resize(n_ranks);
-	send_ranks.resize(n_ranks);
+		std::cout << my_rank << " sending last P value to " << my_rank+1 << std::endl;
 
-        std::vector<int> send_counts(n_ranks, 0);
-	std::vector<int> recv_counts(n_ranks, 0);
-
-	for (int idx=0; idx < (int)ghost_cols.size(); ++idx) {
-		int col = ghost_cols[idx];
-		int owner = (col * n_ranks) / N;
-		recv_ranks[owner].push_back(idx);
+		MPI_Isend(&for_right, 1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
 	}
 
-	for (int i=0; i < n_ranks; ++i) {
-		recv_counts[i] = recv_ranks[i].size();
+	// Recieve from left
+	if (my_rank > 0) {
+
+		std::cout << my_rank << " recieving from " << my_rank-1 << std::endl;
+		MPI_Irecv(&from_left, 1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
 	}
 
-	MPI_Alltoall(recv_counts.data(), 1, MPI_INT, send_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
-
-	for (int i=0; i < n_ranks; ++i) {
-		send_ranks[i].resize(send_counts[i]);
-	}
-}
-
-
-
-void exchange(int my_rank, int n_ranks,
-	      const Vec& search_path,
-	      const std::vector<int>& ghost_cols,
-	      const std::vector<std::vector<int>>& send_ranks,
-	      const std::vector<std::vector<int>>& recv_ranks,
-	      Vec& p_ghost) {
-
-	int n = search_path.size();
-	int ng = ghost_cols.size();
-
-	p_ghost.resize(ng);
-	std::vector<MPI_Request> reqs;
-
-	// Queue up a list of recieves we expect
-	// do so asynchronously with Irecv
-	// will send next
-	for (int src=0; src < send_ranks.size(); ++src) {
-		if (recv_ranks[src].empty()) continue;
-
-		MPI_Request r;
-		MPI_Irecv(p_ghost.data() + recv_ranks[src][0], recv_ranks[src].size(), MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &r);
-
-		reqs.push_back(r);
+	// Recieve from right
+	if (my_rank < n_ranks-1) {
+		std::cout << my_rank << " recieving from " << my_rank+1 << std::endl;
+		MPI_Irecv(&from_right, 1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
 	}
 
+	MPI_Waitall(req_idx, requests, MPI_STATUSES_IGNORE);
 
-	// prepare send buffers
-	std::vector<std::vector<double>> sendbufs(n_ranks);
-
-	for (int dst=0; dst < n_ranks; ++dst) {
-		if (send_ranks[dst].empty()) continue;
-
-		for (int local_idx : send_ranks[dst]) {
-			sendbufs[dst].push_back(search_path[local_idx]);
-		}
+	// Set exchanged values in P
+	if (my_rank > 0) {
+		P_halo[0] = from_left;
 	}
 
-
-	// recvs
-	for (int src=0; src < n_ranks; ++src) {
-		if (recv_ranks[src].empty()) continue;
-
-		MPI_Request r;
-
-
-		std::cout << "Rank " << my_rank << " Irecv " << recv_ranks[src].size() << " from rank " << src << std::endl;
-
-
-		MPI_Irecv(p_ghost.data() + recv_ranks[src][0], recv_ranks[src].size(), MPI_DOUBLE, src, 0, MPI_COMM_WORLD, &r);
-
-		reqs.push_back(r);
-	}
-
-	// sends
-	for (int dst=0; dst < n_ranks; ++dst) {
-		if (send_ranks[dst].empty()) continue;
-
-		MPI_Request s;
-
-		std::cout << "Rank " << my_rank << " Isend " << sendbufs[dst].size() << " to rank " << dst << std::endl;
-
-		MPI_Isend(sendbufs[dst].data(), sendbufs[dst].size(), MPI_DOUBLE, dst, 0, MPI_COMM_WORLD, &s);
-
-		reqs.push_back(s);
-	}
-
-
-	// Wait on all send and recieves
-	MPI_Waitall(reqs.size(), reqs.data(), MPI_STATUSES_IGNORE);
-}
-
-
-
-// Matrix - Vector Multiply on local chunk
-// doesnt do any optimization rn
-// just the naive way
-void local_m_v(const CSR& A_local,
-	       const Vec& search_path,
-	       const Vec& p_ghost,
-	       const std::unordered_map<int, int>& g2l,
-	       Vec& result) {
-
-	int n = A_local.rows();
-	result.setZero(n);
-
-	for (int i=0; i < n; ++i) {
-		double sum = 0;
-		for (CSR::InnerIterator it(A_local, i); it; ++it) {
-			int col = it.col();
-			double v = it.value();
-
-			if (g2l.count(col)) {
-				sum += v * p_ghost[g2l.at(col)];
-			} else {
-				sum += v * search_path[col % n];
-			}
-		}
-		result[i] = sum;
+	if (my_rank < n_ranks-1) {
+		P_halo[local_start + n + 1] = from_right;
 	}
 }
 
 
-	       
-	
+
+
+
+
+
+
+
+
 
 
