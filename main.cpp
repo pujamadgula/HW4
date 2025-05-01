@@ -124,23 +124,51 @@ int main(int argc, char* argv[]) {
   P_halo.segment(local_start, n) = r_cond;
   VecView P = P_halo.segment(local_start, n);
 
+  //P_halo.fill(my_rank);
+
+  Vec AP(n);
+
+  int global_row_offset = n * my_rank;
+
   std::cout << "initialization done" << std::endl;
 
   int iter = 0;
-  while(iter < 1000) {
+  while(iter < 10) {
 
 	  std::cout << "entering iteration " << iter << std::endl;
+
+	  std::cout << "P_halo rank " << my_rank << ": " << P_halo << std::endl;
 
 	  // Need to populate P with values
 	  // from other ranks
 	  exchange_P_halo(my_rank, n_ranks, n, local_start, P_halo);
 
 	  std::cout << "Got P_halo" << std::endl;
+	  std::cout << "P_halo rank " << my_rank << ": " << P_halo << std::endl;
+
+	  MPI_Barrier(MPI_COMM_WORLD);
 
 	  // Multiply
-	  Vec AP(n);
+          for (int local_row=0; local_row < A_local.rows(); ++local_row) {
+	          AP[local_row] = 0;
 
+		  for (CSR::InnerIterator it(A_local, local_row); it; ++it) {
+			  int global_row = local_row + global_row_offset;
+			  int global_col = it.col();
+
+			  // Need to get the relative index to reference
+			  // the right element of vector P_halo
+
+			  int mental_idx = global_col - global_row;
+			  int P_idx = mental_idx + 1;
+
+			  AP[local_row] += it.value() * P_halo[P_idx];
+		  }
+	  }
+	  
+	  
 	  std::cout << "finished multiply" << std::endl;
+	  std::cout << "Rank " << my_rank << AP << std::endl;
 
 	  // alpha
 	  double pAP = P.dot(AP);
@@ -149,7 +177,7 @@ int main(int argc, char* argv[]) {
 	  MPI_Allreduce(&local_alpha, &global_alpha, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
 
-	  std::cout << "all reduce alpha" << std::endl;
+	  std::cout << "all reduce alpha rank " << my_rank << " " << global_alpha << std::endl;
 
 	  // Take step
 	  x += (global_alpha * P);
@@ -166,6 +194,7 @@ int main(int argc, char* argv[]) {
 	  double global_beta;
 	  MPI_Allreduce(&local_beta, &global_beta, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+	  std::cout << "all reduce beta rank " << my_rank << " " << global_beta << std::endl;
 
 	  // Update search path
 	  P = r_cond + (global_beta * P);
@@ -173,6 +202,8 @@ int main(int argc, char* argv[]) {
 	  // Set up next iteration
 	  prev_rr = new_rr;
           iter++;
+
+	  std::cout << "Solution " << my_rank << " : " << x << std::endl;
   }
 
 

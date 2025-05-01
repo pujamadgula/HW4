@@ -197,7 +197,7 @@ void exchange_P_halo(int my_rank, int n_ranks, int n, int local_start, Vec& P_ha
 	}
 
 	if (my_rank < n_ranks-1) {
-		P_halo[local_start + n + 1] = from_right;
+		P_halo[local_start + n] = from_right;
 	}
 }
 
