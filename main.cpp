@@ -8,8 +8,11 @@
 #include <thread>
 #include <chrono>
 
+#include <mpi.h>
+#include <Eigen/Sparse>
+#include <Eigen/Dense>
+#
 #include "common.h"
-#include "matrix.hpp"
 
 // Command Line Option Processing
 int find_arg_idx(int argc, char** argv, const char* option) {
@@ -31,183 +34,254 @@ int find_int_arg(int argc, char** argv, const char* option, int default_value) {
     return default_value;
 }
 
+
+typedef Eigen::SparseMatrix<double, Eigen::RowMajor>     CSR;
+typedef Eigen::Triplet<double>                           Triplet;
+typedef Eigen::VectorXd                                  Vec;
+typedef Eigen::VectorBlock<Eigen::VectorXd>              VecView;
+
+
+// making the 1D laplacian for a local chunk of the 
+// matrix on a specific rank
+void fill_local_matrix(CSR& A_local, int my_rank) {
+
+	int n = A_local.rows();
+	int N = A_local.cols();
+	std::vector<Triplet> triplets;
+
+	int row_start = my_rank * n;
+	for (int i=0; i < n; ++i) {
+		int gi = row_start + i;
+
+		if (gi > 0) triplets.emplace_back(i, gi-1, -1.0);
+
+		triplets.emplace_back(i, gi, 2.0);
+
+		if (gi < N-1) triplets.emplace_back(i, gi+1, -1.0);
+
+	}
+
+	A_local.setFromTriplets(triplets.begin(), triplets.end());
+	A_local.makeCompressed();
+}
+
+
+// Extract the square block of elements on A_local which 
+// fall along the diagonal of the whole matrix A
+void get_diagonal_block(const CSR& A_local, CSR& A_block, int my_rank) {
+
+	int n = A_local.rows();
+	int row_start = my_rank * n;
+
+        std::vector<Triplet> triplets;
+
+	for (int i=0; i < n; ++i) {
+		for (CSR::InnerIterator it(A_local, i); it; ++it) {
+			int col = it.col();
+
+			if (col >= row_start && col < row_start + n) {
+				int local_col = col - row_start;
+				triplets.emplace_back(i, local_col, it.value());
+			}
+		}
+	}
+
+	A_block.setFromTriplets(triplets.begin(), triplets.end());
+	A_block.makeCompressed();
+}
+
+
+// 
+void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond) {
+
+	// Only need to create once
+	static Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
+	static bool initialized = false;
+
+	if (!initialized) {
+		ichol.compute(A_block);
+		if (ichol.info() != Eigen::Success) {
+			throw std::runtime_error("CHOL INIT FAILED!");
+		}
+		initialized = true;
+	}
+
+	r_cond = ichol.solve(r);
+
+	if (ichol.info() != Eigen::Success) {
+		throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
+	}
+}
+
+
+void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
+
+	MPI_Request requests[4];
+	int req_idx = 0;
+
+	int row_start = my_rank * n;
+	int row_end   = my_rank * (n+1);
+
+	double for_left, for_right;
+	double from_left, from_right;
+
+	// R0  - R1 - R2 - R3 - Rn_ranks-1 //
+
+	// Send to left
+	if (my_rank > 0) {
+		for_left = P_halo[1];
+		MPI_Isend(&for_left, 1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
+	}
+
+	// Send to right
+	if (my_rank < n_ranks -1) {
+		for_right = P_halo[1 + n];
+		MPI_Isend(&for_right, 1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
+	}
+
+	// Recieve from left
+	if (my_rank > 0) {
+		MPI_Irecv(&from_left, 1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
+	}
+
+	// Recieve from right
+	if (my_rank < n_ranks-1) {
+		MPI_Irecv(&from_right, 1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &requests[req_idx++]);
+	}
+
+	MPI_Waitall(req_idx, requests, MPI_STATUSES_IGNORE);
+
+	// Set exchanged values in P
+	if (my_rank > 0) {
+		P_halo[0] = from_left;
+	}
+
+	if (my_rank < n_ranks-1) {
+		P_halo[1 + n] = from_right;
+	}
+}
+
+
+
 int main(int argc, char* argv[]) {
-  MPI_Init(&argc, &argv); // Initialize the MPI environment
-  
-  int n_ranks;
-  MPI_Comm_size(MPI_COMM_WORLD, &n_ranks); // Get the number of processes
-  
-  int my_rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank); // Get the rank of the process
+  MPI_Init(&argc, &argv);
+  int n_ranks, my_rank;
+  MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
+  MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-  if (find_arg_idx(argc, argv, "-h") >= 0) {
-      std::cout << "-N <int>: side length of the sparse matrix" << std::endl;
-      return 0;
-  }
-
-  // int N = find_int_arg(argc, argv, "-N", 1 << 20); // global size
   int N = 10;
-
   assert(N % n_ranks == 0);
-  int n = N / n_ranks; // number of local rows
+  int n = N / n_ranks;
+  int row_start = my_rank * n;
+  int row_end = (my_rank+1) * n;
 
-
-  // Create local matrix
+  // build chunk of A
   CSR A_local(n, N);
   fill_local_matrix(A_local, my_rank);
-
   CSR A_block(n,n);
   get_diagonal_block(A_local, A_block, my_rank);
 
-  // Print matrix
-  MPI_Barrier(MPI_COMM_WORLD);  
-  for (int i=0; i < n_ranks; i++) {
+  // Initialize vectors
+  Vec x = Vec::Zero(n), 
+      b = Vec::Ones(n),
+      r = Vec::Ones(n),
+      r_cond(n), 
+      AP(n);
 
-	  if (my_rank == i) {
-		  std::cout << "Rank " << my_rank << " chunk:" << std::endl;
+  const double epsilon =  1e-8 * std::sqrt(b.dot(b));
 
-		  std::cout << Eigen::MatrixXd(A_local) << std::endl;
-		  std::cout << std::endl;
-		  std::cout.flush();
-		  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	  }
-
-	  MPI_Barrier(MPI_COMM_WORLD);
-  }
-
-  // Print diagonal blocks
-  MPI_Barrier(MPI_COMM_WORLD);  
-  for (int i=0; i < n_ranks; i++) {
-
-	  if (my_rank == i) {
-		  std::cout << "Rank " << my_rank << " diag block:" << std::endl;
-		  std::cout << Eigen::MatrixXd(A_block) << std::endl;
-		  std::cout << std::endl;
-		  std::cout.flush();
-		  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-	  }
-
-	  MPI_Barrier(MPI_COMM_WORLD);
-  }
-
-
-  Vec B = Vec::Ones(n); // ax - b = 0
-  
-  // At the beginning, the residual IS b since
-  // our fist guess is all 0s
-  Vec x = Vec::Zero(n);
-  Vec r = Vec::Ones(n);
-
-  // Apply preconditioner
-  Vec r_cond = Vec::Zero(n);
+  // initial preconditioning
   apply_preconditioner(A_block, r, r_cond);
+  double prev_rr_local = r.dot(r_cond);
+  double prev_rr;
+  MPI_Allreduce(&prev_rr_local, &prev_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-  double prev_rr = r.dot(r_cond);
+  // build P_halo and view of P subset
+  Vec P_halo = Vec::Zero(n+2);
+  P_halo.segment(1, n) = r_cond;
+  VecView P = P_halo.segment(1, n);
 
-  // set the first step direction
-  // as the pre-conditioned residual
-
-  Vec P_halo;
-  if (my_rank == 0 || my_rank == n_ranks-1) {
-	  P_halo = Vec::Zero(n+1);
-  } else {
-	  P_halo = Vec::Zero(n+2);
-  }
-
-  int local_start;
-  if (my_rank == 0) {
-	  local_start = 0;
-  } else {
-	  local_start = 1;
-  }
-
-  P_halo.segment(local_start, n) = r_cond;
-  VecView P = P_halo.segment(local_start, n);
-
-  //P_halo.fill(my_rank);
-
-  Vec AP(n);
-
-  int global_row_offset = n * my_rank;
-
-  std::cout << "initialization done" << std::endl;
 
   int iter = 0;
-  while(iter < 10) {
+  double res_norm;
+  while (iter < 100000) {
 
-	  std::cout << "entering iteration " << iter << std::endl;
+    // exchange halo
+    exchange_P_halo(my_rank, n_ranks, n, P_halo);
 
-	  std::cout << "P_halo rank " << my_rank << ": " << P_halo << std::endl;
+    // SpMV
+    for (int local_row = 0; local_row < n; ++local_row) {
+      AP[local_row] = 0;
 
-	  // Need to populate P with values
-	  // from other ranks
-	  exchange_P_halo(my_rank, n_ranks, n, local_start, P_halo);
+      for (CSR::InnerIterator it(A_local, local_row); it; ++it) {
+        int global_col = it.col();
 
-	  std::cout << "Got P_halo" << std::endl;
-	  std::cout << "P_halo rank " << my_rank << ": " << P_halo << std::endl;
+	int P_idx = global_col - row_start + 1;
+        AP[local_row] += it.value() * P_halo[P_idx];
+      }
+    }
 
-	  MPI_Barrier(MPI_COMM_WORLD);
+    // alpha
+    double local_pap = P.dot(AP);
+    double global_pap;
+    MPI_Allreduce(&local_pap, &global_pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    double alpha = prev_rr / global_pap;                   
 
-	  // Multiply
-          for (int local_row=0; local_row < A_local.rows(); ++local_row) {
-	          AP[local_row] = 0;
+    x += alpha * P;                                          
+    r -= alpha * AP;
 
-		  for (CSR::InnerIterator it(A_local, local_row); it; ++it) {
-			  int global_row = local_row + global_row_offset;
-			  int global_col = it.col();
+    // precondition new residual
+    apply_preconditioner(A_block, r, r_cond);
+    double new_rr_local = r.dot(r_cond);
+    double new_rr;
+    MPI_Allreduce(&new_rr_local, &new_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-			  // Need to get the relative index to reference
-			  // the right element of vector P_halo
+    // bail early if meets tolerance
+    res_norm = std::sqrt(new_rr);
+    if (res_norm < epsilon)
+        break;
 
-			  int mental_idx = global_col - global_row;
-			  int P_idx = mental_idx + 1;
+    // beta
+    double beta = new_rr / prev_rr;                     
+    prev_rr = new_rr;
 
-			  AP[local_row] += it.value() * P_halo[P_idx];
-		  }
-	  }
-	  
-	  
-	  std::cout << "finished multiply" << std::endl;
-	  std::cout << "Rank " << my_rank << AP << std::endl;
+    // update search path
+    P = r_cond + beta * P;
 
-	  // alpha
-	  double pAP = P.dot(AP);
-	  double local_alpha = prev_rr / pAP;
-	  double global_alpha;
-	  MPI_Allreduce(&local_alpha, &global_alpha, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    ++iter;
+  }
+
+  if (my_rank == 0)
+      std::cout << "iter=" << iter
+                << "  res_norm=" << res_norm
+		<< "  eps=" << epsilon
+		<< std::endl;
 
 
-	  std::cout << "all reduce alpha rank " << my_rank << " " << global_alpha << std::endl;
+  Vec x_global;
+  if(my_rank==0) x_global.resize(N);
 
-	  // Take step
-	  x += (global_alpha * P);
+  MPI_Gather(x.data(), n, MPI_DOUBLE, my_rank==0 ? x_global.data() : nullptr, n, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-	  // New residual
-	  r -= (global_alpha * AP);
+  if(my_rank==0){
+    std::cout << "gathered x = [ ";
+    for(int i=0; i<N; ++i) std::cout << x_global[i] << " ";
+    std::cout << "]\n\n";
+  }
 
-	  // Precondition our new residual
-          apply_preconditioner(A_block, r, r_cond);
-
-	  // beta
-	  double new_rr = r.dot(r_cond);
-	  double local_beta = new_rr / prev_rr;
-	  double global_beta;
-	  MPI_Allreduce(&local_beta, &global_beta, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-	  std::cout << "all reduce beta rank " << my_rank << " " << global_beta << std::endl;
-
-	  // Update search path
-	  P = r_cond + (global_beta * P);
-
-	  // Set up next iteration
-	  prev_rr = new_rr;
-          iter++;
-
-	  std::cout << "Solution " << my_rank << " : " << x << std::endl;
+  if (my_rank == 0) {
+    double r_square = 0;
+    for (int i = 0; i < N; ++i) {
+      double r = x_global[i] * 2;
+      if (i > 0)  r -= x_global[i - 1];
+      if (i + 1 < N)  r -= x_global[i + 1];
+      r_square += (r - 1) * (r - 1);
+    }
+    std::cout << "|Ax - b| / |b| = " << std::sqrt(r_square) / std::sqrt(N) << std::endl;
   }
 
 
-  MPI_Finalize(); // Finalize the MPI environment
-
+  MPI_Finalize();
   return 0;
 }
+
