@@ -109,8 +109,8 @@ void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond, int my_
 		throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
 	}
 
-	std::cout << "Rank " << my_rank << ": r.head(5) = " << r.head(5).transpose() << "\n";
-        std::cout << "Rank " << my_rank << ": r_cond.head(5) = " << r_cond.head(5).transpose() << "\n";
+	//std::cout << "Rank " << my_rank << ": r.head(5) = " << r.head(5).transpose() << "\n";
+        //std::cout << "Rank " << my_rank << ": r_cond.head(5) = " << r_cond.head(5).transpose() << "\n";
 }
 
 /*
@@ -196,7 +196,7 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-  int N = 10;
+  int N = 20;
   assert(N % n_ranks == 0);
   int n = N / n_ranks;
   int row_start = my_rank * n;
@@ -211,6 +211,8 @@ int main(int argc, char* argv[]) {
   CSR A_block(n,n);
   get_diagonal_block(A_local, A_block, my_rank);
 
+  std::cout << "Rank " << my_rank << " passed this section" << std::endl;
+
   // Initialize vectors
   Vec x = Vec::Zero(n), 
       b = Vec::Ones(n),
@@ -220,16 +222,21 @@ int main(int argc, char* argv[]) {
 
   const double epsilon =  1e-8 * std::sqrt(b.dot(b));
 
+
   // initial preconditioning
   apply_preconditioner(A_block, r, r_cond, my_rank);
+
   double prev_rr_local = r.dot(r_cond);
   double prev_rr;
   MPI_Allreduce(&prev_rr_local, &prev_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
 
   // build P_halo and view of P subset
   Vec P_halo = Vec::Zero(n+2);
   P_halo.segment(1, n) = r_cond;
   VecView P = P_halo.segment(1, n);
+
+
 
 
   int iter = 0;
