@@ -92,18 +92,15 @@ void get_diagonal_block(const CSR& A_local, CSR& A_block, int my_rank) {
 
 
 // 
-void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond) {
+void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond, int my_rank) {
 
 	// Only need to create once
-	static Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
-	static bool initialized = false;
+	// fresh each time for debugging
+	Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
 
-	if (!initialized) {
-		ichol.compute(A_block);
-		if (ichol.info() != Eigen::Success) {
-			throw std::runtime_error("CHOL INIT FAILED!");
-		}
-		initialized = true;
+	ichol.compute(A_block);
+	if (ichol.info() != Eigen::Success) {
+		throw std::runtime_error("CHOL INIT FAILED!");
 	}
 
 	r_cond = ichol.solve(r);
@@ -111,9 +108,12 @@ void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond) {
 	if (ichol.info() != Eigen::Success) {
 		throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
 	}
+
+	std::cout << "Rank " << my_rank << ": r.head(5) = " << r.head(5).transpose() << "\n";
+        std::cout << "Rank " << my_rank << ": r_cond.head(5) = " << r_cond.head(5).transpose() << "\n";
 }
 
-
+/*
 void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
 
 	MPI_Request requests[4];
@@ -160,7 +160,34 @@ void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
 		P_halo[1 + n] = from_right;
 	}
 }
+*/
 
+void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
+    // P_halo layout: [ 0 | 1..n | n+1 ]
+    //                ^ghost   real   ^ghost
+
+    MPI_Request reqs[4];
+    int cnt = 0;
+
+    // 1) non‑blocking send of first real to left‑neighbour’s right‑ghost
+    if (my_rank > 0) {
+        MPI_Isend(&P_halo[1],      1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+        MPI_Irecv(&P_halo[0],      1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+    }
+
+    // 2) non‑blocking send of last real to right‑neighbour’s left‑ghost
+    if (my_rank < n_ranks-1) {
+        MPI_Isend(&P_halo[n],      1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+        MPI_Irecv(&P_halo[n+1],    1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+    }
+
+    MPI_Waitall(cnt, reqs, MPI_STATUSES_IGNORE);
+
+    // debug print
+    std::cout << "Rank " << my_rank << " after halo exchange, P_halo = [";
+    for (int i = 0; i < n+2; ++i) std::cout << P_halo[i] << (i<n+1?", ":"");
+    std::cout << "]\n";
+}
 
 
 int main(int argc, char* argv[]) {
@@ -174,6 +201,9 @@ int main(int argc, char* argv[]) {
   int n = N / n_ranks;
   int row_start = my_rank * n;
   int row_end = (my_rank+1) * n;
+
+  std::cout << "Rank " << my_rank << ": owns rows [" << row_start << ", " << row_end << ")\n";
+
 
   // build chunk of A
   CSR A_local(n, N);
@@ -191,7 +221,7 @@ int main(int argc, char* argv[]) {
   const double epsilon =  1e-8 * std::sqrt(b.dot(b));
 
   // initial preconditioning
-  apply_preconditioner(A_block, r, r_cond);
+  apply_preconditioner(A_block, r, r_cond, my_rank);
   double prev_rr_local = r.dot(r_cond);
   double prev_rr;
   MPI_Allreduce(&prev_rr_local, &prev_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -204,10 +234,21 @@ int main(int argc, char* argv[]) {
 
   int iter = 0;
   double res_norm;
-  while (iter < 100000) {
+  while (iter < 10) {
 
     // exchange halo
     exchange_P_halo(my_rank, n_ranks, n, P_halo);
+
+    MPI_Barrier(MPI_COMM_WORLD);
+    for (int i=0; i < n_ranks; i++) {
+	    if (i == my_rank) {
+                std::cout << "Rank " << my_rank << ": P_halo = [";
+                for (int i = 0; i < n + 2; ++i)
+                    std::cout << P_halo[i] << (i < n + 1 ? ", " : "");
+                std::cout << "]\n";
+	    }
+	    MPI_Barrier(MPI_COMM_WORLD);
+    }
 
     // SpMV
     for (int local_row = 0; local_row < n; ++local_row) {
@@ -217,6 +258,12 @@ int main(int argc, char* argv[]) {
         int global_col = it.col();
 
 	int P_idx = global_col - row_start + 1;
+
+        if (P_idx < 0 || P_idx >= n + 2) {
+            std::cerr << "Rank " << my_rank << " ERROR: P_idx out of bounds (" << P_idx
+              << ") at row " << local_row << ", col " << global_col << ", row_start " << row_start << "\n";
+         }
+
         AP[local_row] += it.value() * P_halo[P_idx];
       }
     }
@@ -231,7 +278,7 @@ int main(int argc, char* argv[]) {
     r -= alpha * AP;
 
     // precondition new residual
-    apply_preconditioner(A_block, r, r_cond);
+    apply_preconditioner(A_block, r, r_cond, my_rank);
     double new_rr_local = r.dot(r_cond);
     double new_rr;
     MPI_Allreduce(&new_rr_local, &new_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -246,7 +293,8 @@ int main(int argc, char* argv[]) {
     prev_rr = new_rr;
 
     // update search path
-    P = r_cond + beta * P;
+    Vec P_old = P; // Copies current values of P
+    P = r_cond + beta * P_old;
 
     ++iter;
   }
