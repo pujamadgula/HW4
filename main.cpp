@@ -96,11 +96,16 @@ void apply_preconditioner(const CSR& A_block, const Vec& r, Vec& r_cond, int my_
 
 	// Only need to create once
 	// fresh each time for debugging
-	Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
+	static Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
+	static bool initalized = false;
 
-	ichol.compute(A_block);
-	if (ichol.info() != Eigen::Success) {
-		throw std::runtime_error("CHOL INIT FAILED!");
+	if (!initalized) {
+	    std::cout << "Rank " << my_rank << " initalizing preconditioner" << std::endl;
+   	    ichol.compute(A_block);
+	    if (ichol.info() != Eigen::Success) {
+                throw std::runtime_error("CHOL INIT FAILED!");
+	    }
+	    initalized = true;
 	}
 
 	r_cond = ichol.solve(r);
@@ -196,7 +201,7 @@ int main(int argc, char* argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-  int N = 20;
+  int N = 100;
   assert(N % n_ranks == 0);
   int n = N / n_ranks;
   int row_start = my_rank * n;
