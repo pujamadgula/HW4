@@ -28,20 +28,58 @@ void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
 
 void CG_Solver::init_preconditioner() {
 
-	ichol.compute(A_block);
-	if (ichol.info() != Eigen::Success) {
-            throw std::runtime_error("CHOL INIT FAILED!");
-	}
+// try the thomas  preconditioner which is supposed
+// to be good for our matrix
+
+	//prec.compute(A_block);
+	//if (prec.info() != Eigen::Success) {
+        //    throw std::runtime_error("CHOL INIT FAILED!");
+	//}
+
+   p_a = std::vector<double>(n-1, -1.0);
+   p_b = std::vector<double>(n, 2.0);
+   p_c = std::vector<double>(n-1, -1.0);
+   c_prime = std::vector<double>(n-1);
+   d_prime = std::vector<double>(n);
+   ms = std::vector<double>(n);
+
+
+    c_prime[0] = p_c[0] / p_b[0];
+    ms[0] = p_b[0];
+
+
+    for (int i = 1; i < n - 1; ++i) {
+        ms[i] = p_b[i] - p_a[i - 1] * c_prime[i - 1];
+        c_prime[i] = p_c[i] / ms[i];
+    }
+
+    ms[n-1] = p_b[n-1] - p_a[n-2] * c_prime[n-2];
 }
 
 
 void CG_Solver::apply_preconditioner() {
 
-    r_cond = ichol.solve(r);
+   // r_cond = prec.solve(r);
 
-    if (ichol.info() != Eigen::Success) {
-	throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
+   // if (prec.info() != Eigen::Success) {
+//	throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
+    //}
+
+  // Forward sweep
+    d_prime[0] = r[0] / ms[0];
+
+    for (int i=1; i < n-1; ++i) {
+        d_prime[i] = (r[i] - p_a[i - 1] * d_prime[i - 1]) / ms[i];
     }
+
+    d_prime[n - 1] = (r[n - 1] - p_a[n - 2] * d_prime[n - 2]) / ms[n-1];
+
+    // Back substitution
+    r_cond[n - 1] = d_prime[n - 1];
+    for (int i = n - 2; i >= 0; --i) {
+        r_cond[i] = d_prime[i] - c_prime[i] * r_cond[i + 1];
+    }
+    
 }
 
 void CG_Solver::SpMV() {
