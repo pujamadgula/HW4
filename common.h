@@ -1,11 +1,36 @@
-#ifndef __CS267_COMMON_H__
-#define __CS267_COMMON_H__
+#pragma once
 
+#include <mpi.h>
+#include <Eigen/Sparse>
+#include <Eigen/Dense>
 #include <vector>
+#include <iostream>
 
-struct CG_Solver {
-  CG_Solver(const int& n, const int& N);
-  void solve(const std::vector<double>& b, std::vector<double>& x, double tol);
+typedef Eigen::SparseMatrix<double, Eigen::RowMajor>     CSR;
+typedef Eigen::Triplet<double>                           Triplet;
+typedef Eigen::VectorXd                                  Vec;
+typedef Eigen::VectorBlock<Eigen::VectorXd>              VecView;
+
+
+class CG_Solver {
+    public:
+
+	int my_rank, n_ranks, n,N, row_start, row_end;
+	CSR A, A_block;
+	Vec x, b, r, r_cond, P_halo, AP;
+	Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
+	double prev_rr_local, prev_rr;
+
+	CG_Solver(int _n, int _N);
+	bool solve(std::vector<double>& solution, int max_iters, double tol);
+
+
+        void init_preconditioner();
+        void apply_preconditioner();
+        void SpMV();
+
 };
 
-#endif
+
+
+

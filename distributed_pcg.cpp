@@ -1,151 +1,202 @@
 #include "common.h"
 
-#include <cassert>
-#include <cmath>
-#include <iostream>
-#include <mpi.h>
-#include <utility>
+void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
+    // P_halo layout: [ 0 | 1..n | n+1 ]
+    //                ^ghost   real   ^ghost
 
-#include <Eigen/Sparse>
+    MPI_Request reqs[4];
+    int cnt = 0;
 
-class Matrix{
-  public:
-    typedef std::pair<int, int> N2;
-  
-    std::map<N2, double> data;
-    int nbrow;
-    int nbcol;
-
-    Matrix(const int& nr = 0, const int& nc = 0): nbrow(nr), nbcol(nc) {
-      for (int i = 0; i < nc; ++i) {
-        data[std::make_pair(i, i)] = 3.0;
-        if (i - 1 >= 0) data[std::make_pair(i, i - 1)] = -1.0;
-        if (i + 1 < nc) data[std::make_pair(i, i + 1)] = -1.0;
-      }
-    }; 
-  
-    int NbRow() const {return nbrow;}
-    int NbCol() const {return nbcol;}
-  
-    // matrix-vector product with vector xi
-    std::vector<double> operator*(const std::vector<double>& xi) const {
-      std::vector<double> b(NbRow(), 0.);
-      for(auto it = data.begin(); it != data.end(); ++it){
-        int j = (it->first).first;
-        int k = (it->first).second; 
-        double Mjk = it->second;
-        b[j] += Mjk * xi[k];
-      }
-  
-      return b;
+    // send of first real to left neighbour’s right ghost
+    if (my_rank > 0) {
+        MPI_Isend(&P_halo[1],      1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+        MPI_Irecv(&P_halo[0],      1, MPI_DOUBLE, my_rank-1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
     }
-};
-  
-// scalar product (u, v)
-double operator,(const std::vector<double>& u, const std::vector<double>& v){ 
-  assert(u.size() == v.size());
-  double sp = 0.;
-  for(int j = 0; j < u.size(); j++)
-    sp += u[j] * v[j];
-  return sp; 
-}
 
-// addition of two vectors u+v
-std::vector<double> operator+(const std::vector<double>& u, const std::vector<double>& v){ 
-  assert(u.size() == v.size());
-  std::vector<double> w = u;
-  for(int j = 0; j < u.size(); j++)
-    w[j] += v[j];
-  return w;
-}
-
-// multiplication of a vector by a scalar a*u
-std::vector<double> operator*(const double& a, const std::vector<double>& u){ 
-  std::vector<double> w(u.size());
-  for(int j = 0; j < w.size(); j++) 
-    w[j] = a * u[j];
-  return w;
-}
-
-// addition assignment operator, add v to u
-void operator+=(std::vector<double>& u, const std::vector<double>& v){ 
-  assert(u.size() == v.size());
-  for(int j = 0; j < u.size(); j++)
-    u[j] += v[j];
-}
-
-/* block Jacobi preconditioner: perform forward and backward substitution
-   using the Cholesky factorization of the local diagonal block computed by Eigen */
-std::vector<double> prec(const Eigen::SimplicialCholesky<Eigen::SparseMatrix<double>>& P, const std::vector<double>& u){
-  Eigen::VectorXd b(u.size());
-  for (int i = 0; i < u.size(); i++) 
-    b[i] = u[i];
-  Eigen::VectorXd xe = P.solve(b);
-  std::vector<double> x(u.size());
-  for (int i = 0; i < u.size(); i++) 
-    x[i] = xe[i];
-  return x;
-}
-
-Matrix A;
-
-/* N is the size of the matrix, and n is the number of rows assigned per rank.
- * It is your responsibility to generate the input matrix, assuming the ranks are 
- * partitioned rowwise.
- * The input matrix is L + I, where L is the Laplacian of a 1D Possion's equation,
- * and I is the identity matrix.
- * See the constructor of the Matrix structure as an example.
- * The constructor of CG_Solver will not be included in the timing result.
- * Note that the starter code only works for 1 rank and it is not efficient.
- */
-CG_Solver::CG_Solver(const int& n, const int& N) {
-  A = Matrix(n, N);
-}
-
-/* The preconditioned conjugate gradient method solving Ax = b with tolerance tol.
- * This is the function being evalauted for performance.
- * Note that the starter code only works for 1 rank and it is not efficient.
- */
-void CG_Solver::solve(const std::vector<double>& b, std::vector<double>& x, double tol) {
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank); // Get the rank of the process
-
-  int n = A.NbCol();
-
-  // get the local diagonal block of A
-  std::vector<Eigen::Triplet<double>> coefficients;
-  for(auto it = A.data.begin(); it != A.data.end(); ++it){
-    int j = (it->first).first;
-    int k = (it->first).second;
-    coefficients.push_back(Eigen::Triplet<double>(j, k, it -> second)); 
-  }
-
-  // compute the Cholesky factorization of the diagonal block for the preconditioner
-  Eigen::SparseMatrix<double> B(n, n);
-  B.setFromTriplets(coefficients.begin(), coefficients.end());
-  Eigen::SimplicialCholesky<Eigen::SparseMatrix<double>> P(B);
-
-  const double epsilon = tol * std::sqrt((b, b));
-  x.assign(b.size(), 0.);
-  std::vector<double> r = b, z = prec(P, b), p = z;
-  double alpha = 0., beta = 0.;
-  double res = std::sqrt((r, r));
-
-  int num_it = 0;
-  
-  while(res >= epsilon) {
-    alpha = (r, z) / (p, A * p);
-    x += (+alpha) * p; 
-    r += (-alpha) * (A * p);
-    z = prec(P, r);
-    beta = (r, z) / (alpha * (p, A * p)); 
-    p = z + beta * p;    
-    res = std::sqrt((r, r));
-    
-    num_it++;
-    if (rank == 0 && !(num_it % 1)) {
-      std::cout << "iteration: " << num_it << "\t";
-      std::cout << "residual:  " << res << "\n";
+    // send of last real to right neighbour’s left ghost
+    if (my_rank < n_ranks-1) {
+        MPI_Isend(&P_halo[n],      1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
+        MPI_Irecv(&P_halo[n+1],    1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
     }
-  }
- }
+
+    MPI_Waitall(cnt, reqs, MPI_STATUSES_IGNORE);
+
+}
+
+///////////////////////////////////////////////////////////////////
+
+
+void CG_Solver::init_preconditioner() {
+
+	ichol.compute(A_block);
+	if (ichol.info() != Eigen::Success) {
+            throw std::runtime_error("CHOL INIT FAILED!");
+	}
+}
+
+
+void CG_Solver::apply_preconditioner() {
+
+    r_cond = ichol.solve(r);
+
+    if (ichol.info() != Eigen::Success) {
+	throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
+    }
+}
+
+void CG_Solver::SpMV() {
+
+    for (int local_row = 0; local_row < n; ++local_row) {
+        AP[local_row] = 0;
+
+        for (CSR::InnerIterator it(A, local_row); it; ++it) {
+            int global_col = it.col();
+	    int P_idx = global_col - row_start + 1;
+
+            AP[local_row] += it.value() * P_halo[P_idx];
+        }
+    }
+}
+
+
+////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+
+CG_Solver::CG_Solver(int _n, int _N) {
+	n = _n;
+	N = _N;
+
+	MPI_Comm_size(MPI_COMM_WORLD, &n_ranks);
+	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+
+	// Initialize our chunk of A
+	A = CSR(n, N);
+	std::vector<Triplet> triplets;
+
+        row_start = my_rank * n;
+        row_end = (my_rank+1) * n;
+
+	for (int i=0; i < n; ++i) {
+		int gi = row_start + i;
+
+		if (gi > 0) triplets.emplace_back(i, gi-1, -1.0);
+
+		triplets.emplace_back(i, gi, 2.0);
+
+		if (gi < N-1) triplets.emplace_back(i, gi+1, -1.0);
+
+	}
+
+	A.setFromTriplets(triplets.begin(), triplets.end());
+	A.makeCompressed();
+
+	// Get our diagonal block of A
+	A_block = CSR(n,n);
+	triplets.clear();
+
+	for (int i=0; i < n; ++i) {
+		for (CSR::InnerIterator it(A, i); it; ++it) {
+			int col = it.col();
+
+			if (col >= row_start && col < row_start + n) {
+				int local_col = col - row_start;
+				triplets.emplace_back(i, local_col, it.value());
+			}
+		}
+	}
+
+	A_block.setFromTriplets(triplets.begin(), triplets.end());
+	A_block.makeCompressed();
+
+	// Initialize the preconditioner
+	// on our A_block
+	init_preconditioner();
+
+	// Initialize our vectors
+	x = Vec::Zero(n);
+	b = Vec::Ones(n);
+	r = Vec::Ones(n);
+	r_cond = Vec(n);
+	AP = Vec(n);
+
+	// Apply initial preconditioning
+	apply_preconditioner();
+	prev_rr_local = r.dot(r_cond);
+	MPI_Allreduce(&prev_rr_local, &prev_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+	// Set initial search direction
+        P_halo = Vec::Zero(n+2);
+	P_halo.segment(1, n) = r_cond;
+
+	//std::cout << "rank " << my_rank << " finished init" << std::endl;
+}
+
+
+bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) {
+
+	// Stopping criteria
+	double epsilon = tol * std::sqrt(b.dot(b));
+
+	// return a bool for whether it converged
+	bool converged = false;
+
+        // View of P_halo that is actually
+	// owned by this rank
+	VecView P = P_halo.segment(1, n);
+
+	double local_pap, global_pap;
+	double alpha;
+
+	double new_rr_local, new_rr;
+	double res_norm, beta;
+
+	for (int iter=0; iter < max_iters; iter++) {
+
+		// Exchange with neighbors
+		exchange_P_halo(my_rank, n_ranks, n, P_halo);
+		//////////////////std::cout << "rank " << my_rank << " exchange" << std::endl;
+
+		// SpMV
+		SpMV();
+		//std::cout << "rank " << my_rank << " spvm" << std::endl;
+
+		// alpha
+		local_pap = P.dot(AP);
+		MPI_Allreduce(&local_pap, &global_pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		alpha = prev_rr / global_pap;
+		//std::cout << "rank " << my_rank << " alpha" << std::endl;
+
+		// Update solution and residual
+		x += alpha * P;
+		r -= alpha * AP;
+		//std::cout << "rank " << my_rank << " update x/r" << std::endl;
+
+		// Precondition new residual
+		apply_preconditioner();
+		new_rr_local = r.dot(r_cond);
+		MPI_Allreduce(&new_rr_local, &new_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+		//std::cout << "rank " << my_rank << " precondition new r" << std::endl;
+
+		// check residual norm
+		res_norm = std::sqrt(new_rr);
+		if (res_norm < epsilon) {
+		        //std::cout << "rank " << my_rank << " breaking" << std::endl;
+			converged = true;
+			break;
+		}
+
+		// beta
+		beta = new_rr / prev_rr;
+		prev_rr = new_rr;
+		//std::cout << "rank " << my_rank << " beta" << std::endl;
+
+		// update search path
+		P = r_cond + beta * P;
+		//std::cout << "rank " << my_rank << " update p" << std::endl;
+	}
+
+	// copy result to solution vector
+	Vec::Map(solution.data(), x.size()) = x;
+	return converged;
+}
+
