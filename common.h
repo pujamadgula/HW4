@@ -18,16 +18,21 @@ class CG_Solver {
 	int my_rank, n_ranks, n,N, row_start, row_end;
 	CSR A, A_block;
 	Vec x, b, r, r_cond, P_halo, AP;
-	Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> ichol;
+	//Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> prec;
 	double prev_rr_local, prev_rr;
+
+
+        std::vector<double> p_a, p_b, p_c, c_prime, d_prime, ms;
 
 	CG_Solver(int _n, int _N);
 	bool solve(std::vector<double>& solution, int max_iters, double tol);
 
 
+
         void init_preconditioner();
         void apply_preconditioner();
-        void SpMV();
+        void SpMV_local();
+        void SpMV_halo();
 
 };
 
