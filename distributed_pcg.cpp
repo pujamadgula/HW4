@@ -1,10 +1,9 @@
 #include "common.h"
 
-void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
+int exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo, MPI_Request reqs[4]) {
     // P_halo layout: [ 0 | 1..n | n+1 ]
     //                ^ghost   real   ^ghost
 
-    MPI_Request reqs[4];
     int cnt = 0;
 
     // send of first real to left neighbour’s right ghost
@@ -19,8 +18,7 @@ void exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo) {
         MPI_Irecv(&P_halo[n+1],    1, MPI_DOUBLE, my_rank+1, 0, MPI_COMM_WORLD, &reqs[cnt++]);
     }
 
-    MPI_Waitall(cnt, reqs, MPI_STATUSES_IGNORE);
-
+    return cnt;
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -82,6 +80,7 @@ void CG_Solver::apply_preconditioner() {
     
 }
 
+/*
 void CG_Solver::SpMV() {
 
     for (int local_row = 0; local_row < n; ++local_row) {
@@ -93,6 +92,32 @@ void CG_Solver::SpMV() {
 
             AP[local_row] += it.value() * P_halo[P_idx];
         }
+    }
+}
+*/
+
+// SPLIT INTO LOCAL AND NON LOCAL TO TRY TO OVERLAP
+// COMMUNICATION AND COMPUTATION
+
+void CG_Solver::SpMV_local() {
+    for (int i=1; i < n-1; ++i) {
+        double sum = 0.0;
+        for (CSR::InnerIterator it(A, i); it; ++it) {
+            int j = it.col() - row_start + 1;
+            sum += it.value() * P_halo[j];
+        }
+        AP[i] = sum;
+    }
+}
+
+void CG_Solver::SpMV_halo() {
+    for (int i : {0, n-1}) {
+        double sum = 0.0;
+        for (CSR::InnerIterator it(A, i); it; ++it) {
+            int j = it.col() - row_start + 1;
+            sum += it.value() * P_halo[j];
+        }
+    AP[i] = sum;
     }
 }
 
@@ -190,13 +215,22 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 
 	for (int iter=0; iter < max_iters; iter++) {
 
-		// Exchange with neighbors
-		exchange_P_halo(my_rank, n_ranks, n, P_halo);
+                // Initiate exchange with neighbors
+                MPI_Request reqs[4];
+                int nreqs = exchange_P_halo(my_rank, n_ranks, n, P_halo, reqs);
 		//////////////////std::cout << "rank " << my_rank << " exchange" << std::endl;
 
-		// SpMV
-		SpMV();
-		//std::cout << "rank " << my_rank << " spvm" << std::endl;
+		// SpMV for local
+		SpMV_local();
+		//std::cout << "rank " << my_rank << " spvm_local" << std::endl;
+
+                // Now wait for exchanged
+                MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
+                //std::cout << "rank " << my_rank << " waiting for exchange" << std::endl;
+
+                // finish SpMV with exchanged
+                SpMV_halo();
+                //std::cout << "rank " << my_rank << " halo spmv" << std::endl;
 
 		// alpha
 		local_pap = P.dot(AP);

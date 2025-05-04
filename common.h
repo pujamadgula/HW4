@@ -31,7 +31,8 @@ class CG_Solver {
 
         void init_preconditioner();
         void apply_preconditioner();
-        void SpMV();
+        void SpMV_local();
+        void SpMV_halo();
 
 };
 
