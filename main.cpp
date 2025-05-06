@@ -96,6 +96,23 @@ int main(int argc, char* argv[]) {
     std::cout << "|Ax - b| / |b| = " << std::sqrt(r_square) / std::sqrt(N) << std::endl;
   }
 
+
+  // start by looking at timing on rank0
+  if (rank == 0) {
+	  std::cout << "exchange_func_time: " << cg.exchange_func_time << std::endl;
+	  std::cout << "spmv_local_time: " << cg.spmv_local_time << std::endl;
+	  std::cout << "wait_time: " << cg.wait_time << std::endl;
+	  std::cout << "spmv_halo_time: " << cg.spmv_halo_time << std::endl;
+	  std::cout << "alpha_time: " << cg.alpha_time << std::endl;
+	  std::cout << "update_time: " << cg.update_time << std::endl;
+	  std::cout << "preconditioner_time: " << cg.preconditioner_time << std::endl;
+	  std::cout << "residual_time: " << cg.residual_time << std::endl;
+	  std::cout << "beta_time: " << cg.beta_time << std::endl;
+	  std::cout << "P_update_time: " << cg.P_update_time << std::endl;
+	  std::cout << "copy_solution_time: " << cg.copy_solution_time << std::endl;
+  }
+
+
   MPI_Finalize(); // Finalize the MPI environment
 
   return 0;

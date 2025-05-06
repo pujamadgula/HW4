@@ -126,6 +126,9 @@ void CG_Solver::SpMV_halo() {
 ///////////////////////////////////////////////////////////
 
 CG_Solver::CG_Solver(int _n, int _N) {
+
+	exchange_func_time, spmv_local_time, wait_time, spmv_halo_time, alpha_time, update_time, preconditioner_time, residual_time, beta_time, P_update_time, copy_solution_time = 0.0;
+
 	n = _n;
 	N = _N;
 
@@ -216,41 +219,61 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 	for (int iter=0; iter < max_iters; iter++) {
 
                 // Initiate exchange with neighbors
+		
+		double exchange_func_start = MPI_Wtime();
                 MPI_Request reqs[4];
                 int nreqs = exchange_P_halo(my_rank, n_ranks, n, P_halo, reqs);
+		exchange_func_time += MPI_Wtime() - exchange_func_start;
 		//////////////////std::cout << "rank " << my_rank << " exchange" << std::endl;
 
 		// SpMV for local
+		double spmv_local_start = MPI_Wtime();
 		SpMV_local();
+		spmv_local_time += MPI_Wtime() - spmv_local_start;
 		//std::cout << "rank " << my_rank << " spvm_local" << std::endl;
 
                 // Now wait for exchanged
+		double wait_start = MPI_Wtime();
                 MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
+		wait_time += MPI_Wtime() - wait_start;
                 //std::cout << "rank " << my_rank << " waiting for exchange" << std::endl;
 
                 // finish SpMV with exchanged
+		double spmv_halo_start = MPI_Wtime();
                 SpMV_halo();
+		spmv_halo_time += MPI_Wtime() - spmv_halo_start;
                 //std::cout << "rank " << my_rank << " halo spmv" << std::endl;
 
 		// alpha
+		double alpha_start = MPI_Wtime();
 		local_pap = P.dot(AP);
 		MPI_Allreduce(&local_pap, &global_pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 		alpha = prev_rr / global_pap;
+		alpha_time += MPI_Wtime() - alpha_start;
 		//std::cout << "rank " << my_rank << " alpha" << std::endl;
 
 		// Update solution and residual
+		double update_start = MPI_Wtime();
 		x += alpha * P;
 		r -= alpha * AP;
+		update_time += MPI_Wtime() - update_start;
 		//std::cout << "rank " << my_rank << " update x/r" << std::endl;
 
 		// Precondition new residual
+		double preconditioner_start = MPI_Wtime();
 		apply_preconditioner();
+		preconditioner_time += MPI_Wtime() - preconditioner_start;
+
+		double residual_start  = MPI_Wtime();
 		new_rr_local = r.dot(r_cond);
 		MPI_Allreduce(&new_rr_local, &new_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 		//std::cout << "rank " << my_rank << " precondition new r" << std::endl;
 
 		// check residual norm
 		res_norm = std::sqrt(new_rr);
+		residual_time += MPI_Wtime() - residual_start;
+
+
 		if (res_norm < epsilon) {
 		        //std::cout << "rank " << my_rank << " breaking" << std::endl;
 			converged = true;
@@ -258,17 +281,23 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 		}
 
 		// beta
+		double beta_start = MPI_Wtime();
 		beta = new_rr / prev_rr;
 		prev_rr = new_rr;
+		beta_time += MPI_Wtime() - beta_start;
 		//std::cout << "rank " << my_rank << " beta" << std::endl;
 
 		// update search path
+		double P_update_start = MPI_Wtime();
 		P = r_cond + beta * P;
+		P_update_time += MPI_Wtime() - P_update_start;
 		//std::cout << "rank " << my_rank << " update p" << std::endl;
 	}
 
 	// copy result to solution vector
+	double copy_solution_start = MPI_Wtime();
 	Vec::Map(solution.data(), x.size()) = x;
+	copy_solution_time += MPI_Wtime() - copy_solution_start;
 	return converged;
 }
 

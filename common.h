@@ -24,10 +24,11 @@ class CG_Solver {
 
         std::vector<double> p_a, p_b, p_c, c_prime, d_prime, ms;
 
+	//timings
+	double exchange_func_time, spmv_local_time, wait_time, spmv_halo_time, alpha_time, update_time, preconditioner_time, residual_time, beta_time, P_update_time, copy_solution_time;
+
 	CG_Solver(int _n, int _N);
 	bool solve(std::vector<double>& solution, int max_iters, double tol);
-
-
 
         void init_preconditioner();
         void apply_preconditioner();
