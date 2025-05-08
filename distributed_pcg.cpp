@@ -100,7 +100,8 @@ void CG_Solver::SpMV() {
 // COMMUNICATION AND COMPUTATION
 
 void CG_Solver::SpMV_local() {
-    for (int i=1; i < n-1; ++i) {
+     /* 
+      for (int i=1; i < n-1; ++i) {
         double sum = 0.0;
         for (CSR::InnerIterator it(A, i); it; ++it) {
             int j = it.col() - row_start + 1;
@@ -108,9 +109,16 @@ void CG_Solver::SpMV_local() {
         }
         AP[i] = sum;
     }
+    */
+    
+    for(int i=0; i < n; ++i){
+      AP[i] = 2.0*P_halo[i+1] - P_halo[i] - P_halo[i+2];
+    }
+    
 }
 
 void CG_Solver::SpMV_halo() {
+    /*
     for (int i : {0, n-1}) {
         double sum = 0.0;
         for (CSR::InnerIterator it(A, i); it; ++it) {
@@ -119,6 +127,23 @@ void CG_Solver::SpMV_halo() {
         }
     AP[i] = sum;
     }
+    */
+
+    if(row_start > 0) {
+      AP[0] = -P_halo[0] + 2.0*P_halo[1] - P_halo[2];
+    } else {
+      // no left neighbor
+      AP[0] =  2.0*P_halo[1] - P_halo[2];
+    }
+
+    // last row (i==n-1)
+    if(row_start + (n-1) < N-1) {
+      AP[n-1] = -P_halo[n-1] + 2.0*P_halo[n] - P_halo[n+1];
+    } else {
+      // no right neighbor
+      AP[n-1] = -P_halo[n-1] + 2.0*P_halo[n];
+    }
+
 }
 
 
