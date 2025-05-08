@@ -34,13 +34,6 @@ void CG_Solver::init_preconditioner() {
         //    throw std::runtime_error("CHOL INIT FAILED!");
 	//}
 
-   p_a = std::vector<double>(n-1, -1.0);
-   p_b = std::vector<double>(n, 2.0);
-   p_c = std::vector<double>(n-1, -1.0);
-   c_prime = std::vector<double>(n-1);
-   d_prime = std::vector<double>(n);
-   ms = std::vector<double>(n);
-
 
     c_prime[0] = p_c[0] / p_b[0];
     ms[0] = p_b[0];
@@ -52,55 +45,56 @@ void CG_Solver::init_preconditioner() {
     }
 
     ms[n-1] = p_b[n-1] - p_a[n-2] * c_prime[n-2];
+
+    // pre-divide and spare divison in each
+    // cycle of the cj steps
+    for(int i=0; i<n; ++i)
+        inv_ms[i] = 1.0/ms[i];
+
 }
 
 
 void CG_Solver::apply_preconditioner() {
 
-   // r_cond = prec.solve(r);
-
-   // if (prec.info() != Eigen::Success) {
-//	throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
-    //}
-
-  // Forward sweep
-    d_prime[0] = r[0] / ms[0];
-
-    for (int i=1; i < n-1; ++i) {
-        d_prime[i] = (r[i] - p_a[i - 1] * d_prime[i - 1]) / ms[i];
-    }
-
-    d_prime[n - 1] = (r[n - 1] - p_a[n - 2] * d_prime[n - 2]) / ms[n-1];
-
-    // Back substitution
-    r_cond[n - 1] = d_prime[n - 1];
-    for (int i = n - 2; i >= 0; --i) {
-        r_cond[i] = d_prime[i] - c_prime[i] * r_cond[i + 1];
-    }
-    
-}
-
+// grab raw pointers  
 /*
-void CG_Solver::SpMV() {
-
-    for (int local_row = 0; local_row < n; ++local_row) {
-        AP[local_row] = 0;
-
-        for (CSR::InnerIterator it(A, local_row); it; ++it) {
-            int global_col = it.col();
-	    int P_idx = global_col - row_start + 1;
-
-            AP[local_row] += it.value() * P_halo[P_idx];
-        }
-    }
-}
+    double* a = p_a.data();         // length n-1  
+    double* inv = inv_ms.data();    // length n  
+    double* dp = d_prime.data();    // length n  
+    double* cp = c_prime.data();    // length n-1  
+    double* x = r_cond.data();      // length n  
+    double* b = r.data();           // length n  
 */
+
+    // — Forward sweep —  
+    double prev = r[0] * inv_ms[0];  
+    d_prime[0] = prev;  
+
+    for(int i = 1; i < n; ++i) {  
+        double t = r[i] - p_a[i-1] * prev;  
+        prev    = t * inv_ms[i];  
+        d_prime[i]   = prev;  
+    }  
+
+    // — Back substitution —  
+    double next = d_prime[n-1];  
+    r_cond[n-1] = next;  
+
+    for(int i = n-2; i >= 0; --i) {  
+        double t = d_prime[i] - c_prime[i] * next;  
+        next    = t;  
+        r_cond[i]     = t;  
+    }  
+}
+
+
 
 // SPLIT INTO LOCAL AND NON LOCAL TO TRY TO OVERLAP
 // COMMUNICATION AND COMPUTATION
 
 void CG_Solver::SpMV_local() {
-    for (int i=1; i < n-1; ++i) {
+     /* 
+      for (int i=1; i < n-1; ++i) {
         double sum = 0.0;
         for (CSR::InnerIterator it(A, i); it; ++it) {
             int j = it.col() - row_start + 1;
@@ -108,9 +102,16 @@ void CG_Solver::SpMV_local() {
         }
         AP[i] = sum;
     }
+    */
+    
+    for(int i=0; i < n; ++i){
+      AP[i] = 2.0*P_halo[i+1] - P_halo[i] - P_halo[i+2];
+    }
+    
 }
 
 void CG_Solver::SpMV_halo() {
+    /*
     for (int i : {0, n-1}) {
         double sum = 0.0;
         for (CSR::InnerIterator it(A, i); it; ++it) {
@@ -119,6 +120,23 @@ void CG_Solver::SpMV_halo() {
         }
     AP[i] = sum;
     }
+    */
+
+    if(row_start > 0) {
+      AP[0] = -P_halo[0] + 2.0*P_halo[1] - P_halo[2];
+    } else {
+      // no left neighbor
+      AP[0] =  2.0*P_halo[1] - P_halo[2];
+    }
+
+    // last row (i==n-1)
+    if(row_start + (n-1) < N-1) {
+      AP[n-1] = -P_halo[n-1] + 2.0*P_halo[n] - P_halo[n+1];
+    } else {
+      // no right neighbor
+      AP[n-1] = -P_halo[n-1] + 2.0*P_halo[n];
+    }
+
 }
 
 
@@ -126,6 +144,9 @@ void CG_Solver::SpMV_halo() {
 ///////////////////////////////////////////////////////////
 
 CG_Solver::CG_Solver(int _n, int _N) {
+
+	exchange_func_time, spmv_local_time, wait_time, spmv_halo_time, alpha_time, update_time, preconditioner_time, residual_time, beta_time, P_update_time, copy_solution_time = 0.0;
+
 	n = _n;
 	N = _N;
 
@@ -173,6 +194,34 @@ CG_Solver::CG_Solver(int _n, int _N) {
 
 	// Initialize the preconditioner
 	// on our A_block
+
+       // Allocate for the preconditioner
+       /*
+       p_a = std::vector<double>(n-1, -1.0);
+       p_b = std::vector<double>(n, 2.0);
+       p_c = std::vector<double>(n-1, -1.0);
+       c_prime = std::vector<double>(n-1);
+       d_prime = std::vector<double>(n);
+       ms = std::vector<double>(n);
+       inv_ms = std::vector<double>(n);
+       */
+
+       p_a = new double[n-1];
+       std::fill_n(p_a, n-1, -1.0);
+
+       p_b = new double[n];
+       std::fill_n(p_b, n, 2.0);
+
+       p_c = new double[n-1];
+       std::fill_n(p_c, n-1, -1.0);
+
+       c_prime = new double[n-1];
+       d_prime = new double[n];
+       ms = new double[n];
+       inv_ms = new double[n];
+
+
+
 	init_preconditioner();
 
 	// Initialize our vectors
@@ -192,6 +241,19 @@ CG_Solver::CG_Solver(int _n, int _N) {
 	P_halo.segment(1, n) = r_cond;
 
 	//std::cout << "rank " << my_rank << " finished init" << std::endl;
+
+}
+
+CG_Solver::~CG_Solver() {
+       delete[] p_a;
+       delete[] p_b;
+
+       delete[] p_c;
+
+       delete[] c_prime;
+       delete[] d_prime;
+       delete[] ms;
+       delete[] inv_ms;
 }
 
 
@@ -216,41 +278,61 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 	for (int iter=0; iter < max_iters; iter++) {
 
                 // Initiate exchange with neighbors
+		
+		double exchange_func_start = MPI_Wtime();
                 MPI_Request reqs[4];
                 int nreqs = exchange_P_halo(my_rank, n_ranks, n, P_halo, reqs);
+		exchange_func_time += MPI_Wtime() - exchange_func_start;
 		//////////////////std::cout << "rank " << my_rank << " exchange" << std::endl;
 
 		// SpMV for local
+		double spmv_local_start = MPI_Wtime();
 		SpMV_local();
+		spmv_local_time += MPI_Wtime() - spmv_local_start;
 		//std::cout << "rank " << my_rank << " spvm_local" << std::endl;
 
                 // Now wait for exchanged
+		double wait_start = MPI_Wtime();
                 MPI_Waitall(nreqs, reqs, MPI_STATUSES_IGNORE);
+		wait_time += MPI_Wtime() - wait_start;
                 //std::cout << "rank " << my_rank << " waiting for exchange" << std::endl;
 
                 // finish SpMV with exchanged
+		double spmv_halo_start = MPI_Wtime();
                 SpMV_halo();
+		spmv_halo_time += MPI_Wtime() - spmv_halo_start;
                 //std::cout << "rank " << my_rank << " halo spmv" << std::endl;
 
 		// alpha
+		double alpha_start = MPI_Wtime();
 		local_pap = P.dot(AP);
 		MPI_Allreduce(&local_pap, &global_pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 		alpha = prev_rr / global_pap;
+		alpha_time += MPI_Wtime() - alpha_start;
 		//std::cout << "rank " << my_rank << " alpha" << std::endl;
 
 		// Update solution and residual
+		double update_start = MPI_Wtime();
 		x += alpha * P;
 		r -= alpha * AP;
+		update_time += MPI_Wtime() - update_start;
 		//std::cout << "rank " << my_rank << " update x/r" << std::endl;
 
 		// Precondition new residual
+		double preconditioner_start = MPI_Wtime();
 		apply_preconditioner();
+		preconditioner_time += MPI_Wtime() - preconditioner_start;
+
+		double residual_start  = MPI_Wtime();
 		new_rr_local = r.dot(r_cond);
 		MPI_Allreduce(&new_rr_local, &new_rr, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 		//std::cout << "rank " << my_rank << " precondition new r" << std::endl;
 
 		// check residual norm
 		res_norm = std::sqrt(new_rr);
+		residual_time += MPI_Wtime() - residual_start;
+
+
 		if (res_norm < epsilon) {
 		        //std::cout << "rank " << my_rank << " breaking" << std::endl;
 			converged = true;
@@ -258,17 +340,23 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 		}
 
 		// beta
+		double beta_start = MPI_Wtime();
 		beta = new_rr / prev_rr;
 		prev_rr = new_rr;
+		beta_time += MPI_Wtime() - beta_start;
 		//std::cout << "rank " << my_rank << " beta" << std::endl;
 
 		// update search path
+		double P_update_start = MPI_Wtime();
 		P = r_cond + beta * P;
+		P_update_time += MPI_Wtime() - P_update_start;
 		//std::cout << "rank " << my_rank << " update p" << std::endl;
 	}
 
 	// copy result to solution vector
+	double copy_solution_start = MPI_Wtime();
 	Vec::Map(solution.data(), x.size()) = x;
+	copy_solution_time += MPI_Wtime() - copy_solution_start;
 	return converged;
 }
 
