@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
   // solution vector
   // max iters
   // tol
-  bool converged = cg.solve(x, 10000, 1e-8);
+  cg.solve(x, 10000, 1e-8);
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -73,11 +73,6 @@ int main(int argc, char* argv[]) {
               << " seconds." << std::endl;
   }
 
-  // Print whether we converged
-  if (rank == 0) {
-      std::cout << "Converged?: " << converged << std::endl;
-  }
-  
   std::vector<double> global_x;
 
   if (rank == 0)
@@ -98,6 +93,7 @@ int main(int argc, char* argv[]) {
 
 
   // start by looking at timing on rank0
+  /*
   if (rank == 0) {
 	  std::cout << "exchange_func_time: " << cg.exchange_func_time << std::endl;
 	  std::cout << "spmv_local_time: " << cg.spmv_local_time << std::endl;
@@ -111,6 +107,7 @@ int main(int argc, char* argv[]) {
 	  std::cout << "P_update_time: " << cg.P_update_time << std::endl;
 	  std::cout << "copy_solution_time: " << cg.copy_solution_time << std::endl;
   }
+  */
 
 
   MPI_Finalize(); // Finalize the MPI environment
