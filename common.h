@@ -30,7 +30,7 @@ class CG_Solver {
 
 	CG_Solver(int _n, int _N);
 	~CG_Solver();
-	bool solve(std::vector<double>& solution, int max_iters, double tol);
+	int solve(std::vector<double>& solution, int max_iters, double tol);
 
         void init_preconditioner();
         void apply_preconditioner();

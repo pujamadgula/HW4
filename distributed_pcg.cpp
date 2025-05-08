@@ -257,7 +257,7 @@ CG_Solver::~CG_Solver() {
 }
 
 
-bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) {
+int CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) {
 
 	// Stopping criteria
 	double epsilon = tol * std::sqrt(b.dot(b));
@@ -275,7 +275,8 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 	double new_rr_local, new_rr;
 	double res_norm, beta;
 
-	for (int iter=0; iter < max_iters; iter++) {
+        int iter;
+	for (iter=0; iter < max_iters; iter++) {
 
                 // Initiate exchange with neighbors
 		
@@ -357,6 +358,6 @@ bool CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 	double copy_solution_start = MPI_Wtime();
 	Vec::Map(solution.data(), x.size()) = x;
 	copy_solution_time += MPI_Wtime() - copy_solution_start;
-	return converged;
+	return iter;
 }
 
