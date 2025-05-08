@@ -34,13 +34,6 @@ void CG_Solver::init_preconditioner() {
         //    throw std::runtime_error("CHOL INIT FAILED!");
 	//}
 
-   p_a = std::vector<double>(n-1, -1.0);
-   p_b = std::vector<double>(n, 2.0);
-   p_c = std::vector<double>(n-1, -1.0);
-   c_prime = std::vector<double>(n-1);
-   d_prime = std::vector<double>(n);
-   ms = std::vector<double>(n);
-
 
     c_prime[0] = p_c[0] / p_b[0];
     ms[0] = p_b[0];
@@ -52,49 +45,49 @@ void CG_Solver::init_preconditioner() {
     }
 
     ms[n-1] = p_b[n-1] - p_a[n-2] * c_prime[n-2];
+
+    // pre-divide and spare divison in each
+    // cycle of the cj steps
+    for(int i=0; i<n; ++i)
+        inv_ms[i] = 1.0/ms[i];
+
 }
 
 
 void CG_Solver::apply_preconditioner() {
 
-   // r_cond = prec.solve(r);
-
-   // if (prec.info() != Eigen::Success) {
-//	throw std::runtime_error("PRECONDITIONER SOLVE FIAILED");
-    //}
-
-  // Forward sweep
-    d_prime[0] = r[0] / ms[0];
-
-    for (int i=1; i < n-1; ++i) {
-        d_prime[i] = (r[i] - p_a[i - 1] * d_prime[i - 1]) / ms[i];
-    }
-
-    d_prime[n - 1] = (r[n - 1] - p_a[n - 2] * d_prime[n - 2]) / ms[n-1];
-
-    // Back substitution
-    r_cond[n - 1] = d_prime[n - 1];
-    for (int i = n - 2; i >= 0; --i) {
-        r_cond[i] = d_prime[i] - c_prime[i] * r_cond[i + 1];
-    }
-    
-}
-
+// grab raw pointers  
 /*
-void CG_Solver::SpMV() {
-
-    for (int local_row = 0; local_row < n; ++local_row) {
-        AP[local_row] = 0;
-
-        for (CSR::InnerIterator it(A, local_row); it; ++it) {
-            int global_col = it.col();
-	    int P_idx = global_col - row_start + 1;
-
-            AP[local_row] += it.value() * P_halo[P_idx];
-        }
-    }
-}
+    double* a = p_a.data();         // length n-1  
+    double* inv = inv_ms.data();    // length n  
+    double* dp = d_prime.data();    // length n  
+    double* cp = c_prime.data();    // length n-1  
+    double* x = r_cond.data();      // length n  
+    double* b = r.data();           // length n  
 */
+
+    // — Forward sweep —  
+    double prev = r[0] * inv_ms[0];  
+    d_prime[0] = prev;  
+
+    for(int i = 1; i < n; ++i) {  
+        double t = r[i] - p_a[i-1] * prev;  
+        prev    = t * inv_ms[i];  
+        d_prime[i]   = prev;  
+    }  
+
+    // — Back substitution —  
+    double next = d_prime[n-1];  
+    r_cond[n-1] = next;  
+
+    for(int i = n-2; i >= 0; --i) {  
+        double t = d_prime[i] - c_prime[i] * next;  
+        next    = t;  
+        r_cond[i]     = t;  
+    }  
+}
+
+
 
 // SPLIT INTO LOCAL AND NON LOCAL TO TRY TO OVERLAP
 // COMMUNICATION AND COMPUTATION
@@ -201,6 +194,34 @@ CG_Solver::CG_Solver(int _n, int _N) {
 
 	// Initialize the preconditioner
 	// on our A_block
+
+       // Allocate for the preconditioner
+       /*
+       p_a = std::vector<double>(n-1, -1.0);
+       p_b = std::vector<double>(n, 2.0);
+       p_c = std::vector<double>(n-1, -1.0);
+       c_prime = std::vector<double>(n-1);
+       d_prime = std::vector<double>(n);
+       ms = std::vector<double>(n);
+       inv_ms = std::vector<double>(n);
+       */
+
+       p_a = new double[n-1];
+       std::fill_n(p_a, n-1, -1.0);
+
+       p_b = new double[n];
+       std::fill_n(p_b, n, 2.0);
+
+       p_c = new double[n-1];
+       std::fill_n(p_c, n-1, -1.0);
+
+       c_prime = new double[n-1];
+       d_prime = new double[n];
+       ms = new double[n];
+       inv_ms = new double[n];
+
+
+
 	init_preconditioner();
 
 	// Initialize our vectors
@@ -220,6 +241,19 @@ CG_Solver::CG_Solver(int _n, int _N) {
 	P_halo.segment(1, n) = r_cond;
 
 	//std::cout << "rank " << my_rank << " finished init" << std::endl;
+
+}
+
+CG_Solver::~CG_Solver() {
+       delete[] p_a;
+       delete[] p_b;
+
+       delete[] p_c;
+
+       delete[] c_prime;
+       delete[] d_prime;
+       delete[] ms;
+       delete[] inv_ms;
 }
 
 
