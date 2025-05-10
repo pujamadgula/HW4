@@ -1,4 +1,47 @@
 #include "common.h"
+    
+#include <mpi.h>
+#include <Eigen/Sparse>
+#include <Eigen/Dense>
+#include <vector>
+#include <iostream>
+
+typedef Eigen::SparseMatrix<double, Eigen::RowMajor>     CSR;
+typedef Eigen::Triplet<double>                           Triplet;
+typedef Eigen::VectorXd                                  Vec;
+typedef Eigen::VectorBlock<Eigen::VectorXd>              VecView;
+
+
+class i_CG_Solver {
+    public:
+
+	int my_rank, n_ranks, n,N, row_start, row_end;
+	CSR A, A_block;
+	Vec x, b, r, r_cond, P_halo, AP;
+	//Eigen::IncompleteCholesky<double, Eigen::Lower, Eigen::NaturalOrdering<int>> prec;
+	double prev_rr_local, prev_rr;
+
+
+        // std::vector<double> p_a, p_b, p_c, c_prime, d_prime, ms, inv_ms;
+        double *p_a, *p_b, *p_c, *c_prime, *d_prime, *ms, *inv_ms;
+
+	//timings
+	//double exchange_func_time, spmv_local_time, wait_time, spmv_halo_time, alpha_time, update_time, preconditioner_time, residual_time, beta_time, P_update_time, copy_solution_time;
+
+	i_CG_Solver();
+	void init(int _n, int _N);
+	~i_CG_Solver();
+	void solve(std::vector<double>& solution, int max_iters, double tol);
+
+        void init_preconditioner();
+        void apply_preconditioner();
+        void SpMV_local();
+        void SpMV_halo();
+
+};
+
+
+
 
 int exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo, MPI_Request reqs[4]) {
     // P_halo layout: [ 0 | 1..n | n+1 ]
@@ -24,7 +67,7 @@ int exchange_P_halo(int my_rank, int n_ranks, int n, Vec& P_halo, MPI_Request re
 ///////////////////////////////////////////////////////////////////
 
 
-void CG_Solver::init_preconditioner() {
+void i_CG_Solver::init_preconditioner() {
 
 // try the thomas  preconditioner which is supposed
 // to be good for our matrix
@@ -54,17 +97,7 @@ void CG_Solver::init_preconditioner() {
 }
 
 
-void CG_Solver::apply_preconditioner() {
-
-// grab raw pointers  
-/*
-    double* a = p_a.data();         // length n-1  
-    double* inv = inv_ms.data();    // length n  
-    double* dp = d_prime.data();    // length n  
-    double* cp = c_prime.data();    // length n-1  
-    double* x = r_cond.data();      // length n  
-    double* b = r.data();           // length n  
-*/
+void i_CG_Solver::apply_preconditioner() {
 
     // — Forward sweep —  
     double prev = r[0] * inv_ms[0];  
@@ -92,7 +125,7 @@ void CG_Solver::apply_preconditioner() {
 // SPLIT INTO LOCAL AND NON LOCAL TO TRY TO OVERLAP
 // COMMUNICATION AND COMPUTATION
 
-void CG_Solver::SpMV_local() {
+void i_CG_Solver::SpMV_local() {
      /* 
       for (int i=1; i < n-1; ++i) {
         double sum = 0.0;
@@ -110,7 +143,7 @@ void CG_Solver::SpMV_local() {
     
 }
 
-void CG_Solver::SpMV_halo() {
+void i_CG_Solver::SpMV_halo() {
     /*
     for (int i : {0, n-1}) {
         double sum = 0.0;
@@ -142,8 +175,9 @@ void CG_Solver::SpMV_halo() {
 
 ////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////
+i_CG_Solver::i_CG_Solver() {};
 
-CG_Solver::CG_Solver(int _n, int _N) {
+void i_CG_Solver::init(int _n, int _N) {
 
 	// exchange_func_time, spmv_local_time, wait_time, spmv_halo_time, alpha_time, update_time, preconditioner_time, residual_time, beta_time, P_update_time, copy_solution_time = 0.0;
 
@@ -196,16 +230,6 @@ CG_Solver::CG_Solver(int _n, int _N) {
 	// on our A_block
 
        // Allocate for the preconditioner
-       /*
-       p_a = std::vector<double>(n-1, -1.0);
-       p_b = std::vector<double>(n, 2.0);
-       p_c = std::vector<double>(n-1, -1.0);
-       c_prime = std::vector<double>(n-1);
-       d_prime = std::vector<double>(n);
-       ms = std::vector<double>(n);
-       inv_ms = std::vector<double>(n);
-       */
-
        p_a = new double[n-1];
        std::fill_n(p_a, n-1, -1.0);
 
@@ -244,7 +268,7 @@ CG_Solver::CG_Solver(int _n, int _N) {
 
 }
 
-CG_Solver::~CG_Solver() {
+i_CG_Solver::~i_CG_Solver() {
        delete[] p_a;
        delete[] p_b;
 
@@ -257,7 +281,7 @@ CG_Solver::~CG_Solver() {
 }
 
 
-void CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) {
+void i_CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) {
 
 	// Stopping criteria
 	double epsilon = tol * std::sqrt(b.dot(b));
@@ -358,4 +382,36 @@ void CG_Solver::solve(std::vector<double>& solution, int max_iters, double tol) 
 	Vec::Map(solution.data(), x.size()) = x;
 	//copy_solution_time += MPI_Wtime() - copy_solution_start;
 }
+
+
+
+////////////////////////////////////////////////////////////////////
+i_CG_Solver icg;
+///////////////////////////////////////////////////////////////////
+
+CG_Solver::CG_Solver(const int& n, const int& N) {
+	int _n = n;
+	int _N = N;
+	icg.init(_n, _N);
+}
+
+void CG_Solver::solve(const std::vector<double>& b, std::vector<double>& x, double tol) {
+	icg.solve(x, 10000, tol);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

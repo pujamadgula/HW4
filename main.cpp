@@ -54,15 +54,12 @@ int main(int argc, char* argv[]) {
   std::vector<double> x(n, 0);
 
   // right-hand side
-  // std::vector<double> b(n, 1);
+  std::vector<double> b(n, 1);
 
   MPI_Barrier(MPI_COMM_WORLD);
   double time = MPI_Wtime();
 
-  // solution vector
-  // max iters
-  // tol
-  cg.solve(x, 10000, 1e-8);
+  cg.solve(b, x, 1e-8);
 
   MPI_Barrier(MPI_COMM_WORLD);
 
@@ -72,9 +69,9 @@ int main(int argc, char* argv[]) {
               << size << " rank(s): " << MPI_Wtime() - time 
               << " seconds." << std::endl;
   }
-
+  
   std::vector<double> global_x;
-
+  
   if (rank == 0)
     global_x.resize(N);
 
@@ -90,25 +87,6 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "|Ax - b| / |b| = " << std::sqrt(r_square) / std::sqrt(N) << std::endl;
   }
-
-
-  // start by looking at timing on rank0
-  /*
-  if (rank == 0) {
-	  std::cout << "exchange_func_time: " << cg.exchange_func_time << std::endl;
-	  std::cout << "spmv_local_time: " << cg.spmv_local_time << std::endl;
-	  std::cout << "wait_time: " << cg.wait_time << std::endl;
-	  std::cout << "spmv_halo_time: " << cg.spmv_halo_time << std::endl;
-	  std::cout << "alpha_time: " << cg.alpha_time << std::endl;
-	  std::cout << "update_time: " << cg.update_time << std::endl;
-	  std::cout << "preconditioner_time: " << cg.preconditioner_time << std::endl;
-	  std::cout << "residual_time: " << cg.residual_time << std::endl;
-	  std::cout << "beta_time: " << cg.beta_time << std::endl;
-	  std::cout << "P_update_time: " << cg.P_update_time << std::endl;
-	  std::cout << "copy_solution_time: " << cg.copy_solution_time << std::endl;
-  }
-  */
-
 
   MPI_Finalize(); // Finalize the MPI environment
 
